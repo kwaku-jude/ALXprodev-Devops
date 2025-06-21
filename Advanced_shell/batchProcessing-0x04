@@ -49,12 +49,19 @@ fetch_pokemon_parallel() {
 wait_for_completion() {
     echo "Waiting for all parallel processes to complete..."
     
+    # Show active jobs
+    echo "Active background jobs:"
+    jobs
+    echo ""
+    
     # Wait for all background processes
     for pid in "${PIDS[@]}"; do
         wait "$pid"
     done
     
     echo "All parallel processes completed!"
+    echo "Final job status:"
+    jobs
     echo ""
     
     # Process results
