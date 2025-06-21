@@ -1,0 +1,105 @@
+
+#!/bin/bash
+
+# File: batchProcessing-0x02 (Modified for Task 4)
+# Objective: Add robust error handling and retry logic for API requests
+
+# List of Pokémon to fetch
+POKEMON_LIST=("bulbasaur" "ivysaur" "venusaur" "charmander" "charmeleon")
+
+# Create directory for storing Pokémon data
+DATA_DIR="pokemon_data"
+mkdir -p "$DATA_DIR"
+
+# Base API URL
+BASE_URL="https://pokeapi.co/api/v2/pokemon"
+
+# Error log file
+ERROR_LOG="fetch_errors.txt"
+
+# Maximum retry attempts
+MAX_RETRIES=3
+
+# Function to log errors
+log_error() {
+    local message=$1
+    echo "$(date): $message" >> "$ERROR_LOG"
+}
+
+# Function to fetch Pokémon data with retry logic
+fetch_pokemon_with_retry() {
+    local pokemon_name=$1
+    local output_file="$DATA_DIR/${pokemon_name}.json"
+    local api_url="$BASE_URL/$pokemon_name"
+    local attempt=1
+    
+    echo "Fetching data for $pokemon_name..."
+    
+    while [ $attempt -le $MAX_RETRIES ]; do
+        echo "  Attempt $attempt/$MAX_RETRIES..."
+        
+        # Make the API request
+        if curl -s --max-time 30 --retry 0 "$api_url" -o "$output_file"; then
+            # Check if the response is valid JSON and contains expected data
+            if jq empty "$output_file" 2>/dev/null && jq -e '.name' "$output_file" >/dev/null 2>&1; then
+                echo "Saved data to $output_file ✅"
+                return 0
+            else
+                echo "  ❌ Invalid or incomplete data received"
+                if [ $attempt -eq $MAX_RETRIES ]; then
+                    log_error "Failed to get valid data for $pokemon_name after $MAX_RETRIES attempts - invalid JSON or missing data"
+                    rm -f "$output_file"
+                    return 1
+                fi
+            fi
+        else
+            echo "  ❌ Network request failed"
+            if [ $attempt -eq $MAX_RETRIES ]; then
+                log_error "Failed to fetch $pokemon_name after $MAX_RETRIES attempts - network error"
+                return 1
+            fi
+        fi
+        
+        # Wait before retry (exponential backoff)
+        wait_time=$((attempt * 2))
+        echo "  Waiting ${wait_time}s before retry..."
+        sleep $wait_time
+        attempt=$((attempt + 1))
+    done
+    
+    return 1
+}
+
+# Initialize counters
+successful_fetches=0
+failed_fetches=0
+
+echo "Starting batch processing with error handling and retry logic..."
+echo "Maximum $MAX_RETRIES attempts per Pokémon"
+echo "Errors will be logged to: $ERROR_LOG"
+echo ""
+
+# Clear previous error log
+> "$ERROR_LOG"
+
+# Fetch data for each Pokémon
+for pokemon in "${POKEMON_LIST[@]}"; do
+    if fetch_pokemon_with_retry "$pokemon"; then
+        successful_fetches=$((successful_fetches + 1))
+    else
+        failed_fetches=$((failed_fetches + 1))
+        echo "❌ Skipping $pokemon after $MAX_RETRIES failed attempts"
+    fi
+    
+    # Rate limiting delay between different Pokémon
+    sleep 1
+    echo ""
+done
+
+echo "Batch processing completed!"
+echo "Successful fetches: $successful_fetches"
+echo "Failed fetches: $failed_fetches"
+
+if [ $failed_fetches -gt 0 ]; then
+    echo "Check $ERROR_LOG for error details"
+fi
